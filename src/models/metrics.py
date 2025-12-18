@@ -1,7 +1,26 @@
+import os
+import socket
 from typing import List, Optional
 
 import numpy as np
 import torch
+
+try:
+    # attempt to collect NVIDIA GPU information
+    import pynvml
+
+    # # Init
+    # pynvml.nvmlInit()
+    # num_gpus = pynvml.nvmlDeviceGetCount()
+    # # Identify local rank and hostname
+    # # local_rank = get_local_rank()
+    # hostname = socket.gethostname()
+    # print(
+    #     f"Logging GPU metrics to wandb: num gpus={num_gpus}, local rank={local_rank}, hostname={hostname}"
+    # )
+except Exception as e:
+    pynvml = None
+    print(f"pynvml not installed, GPU metrics will not be logged. Error: {e}")
 
 
 def has_coords_frac(coords_mask, structure_mask, **kwargs):
@@ -12,22 +31,6 @@ def has_coords_frac(coords_mask, structure_mask, **kwargs):
     assert has_coords_mask.ndim == 2  # b, L
     has_coords_frac = has_coords_mask.float().sum() / structure_mask.float().sum()
     return has_coords_frac
-
-
-def plddt_metrics(
-    plddts, structure_mask: torch.Tensor, coords_mask: torch.Tensor, **kwargs
-):
-    metrics = {}
-    assert coords_mask.ndim == 4
-    has_coords_mask = coords_mask.flatten(start_dim=-2).any(-1) & structure_mask
-    mean_plddt_unmasked = (
-        plddts * has_coords_mask.float()
-    ).sum() / has_coords_mask.float().sum()
-    metrics["mean_plddt_unmasked"] = mean_plddt_unmasked
-    metrics["mean_plddt"] = (
-        plddts * structure_mask.float()
-    ).sum() / structure_mask.float().sum()
-    return metrics
 
 
 def calc_accuracy_with_masks(
@@ -45,6 +48,7 @@ def calc_accuracy_with_masks(
 
 
 def accuracy_from_outputs(
+    input_ids,
     model_outputs,
     labels,
     start_ix=0,
@@ -73,7 +77,7 @@ def accuracy_from_outputs(
 
         # Calculate document indices using BOS tokens
         document_indices = torch.cumsum(
-            labels == bos_token_id, dim=-1
+            input_ids == bos_token_id, dim=-1
         )  # (batch, seq_len)
         # Calculate sequence indices that reset at each document
         sep_mask = (labels == sep_token_id).long()

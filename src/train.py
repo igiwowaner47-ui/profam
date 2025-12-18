@@ -7,7 +7,7 @@ import rootutils
 import torch
 from lightning import Callback, LightningDataModule, LightningModule, Trainer
 from lightning.pytorch.loggers import Logger
-from omegaconf import DictConfig
+from omegaconf import DictConfig, open_dict
 
 rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 # ------------------------------------------------------------------------------------ #
@@ -16,13 +16,13 @@ rootutils.setup_root(__file__, indicator=".project-root", pythonpath=True)
 #       (so you don't need to force user to install project as a package)
 #       (necessary before importing any local modules e.g. `from src import utils`)
 # - setting up PROJECT_ROOT environment variable
-#       (which is used as a base for paths in "configs/paths/default.yaml")
+#       (which is used as a base for paths in "configs/train.yaml")
 #       (this way all filepaths are the same no matter where you run the code)
 # - loading environment variables from ".env" in root dir
 #
 # you can remove it if you:
 # 1. either install project as a package or move entry files to project root dir
-# 2. set `root_dir` to "." in "configs/paths/default.yaml"
+# 2. set `paths.root_dir` to "." in "configs/train.yaml"
 #
 # more info: https://github.com/ashleve/rootutils
 # ------------------------------------------------------------------------------------ #
@@ -41,6 +41,7 @@ from src.utils import (
 )
 
 log = RankedLogger(__name__, rank_zero_only=True)
+ckpt_dir_for_saving_test_results: Optional[str] = None
 
 
 @task_wrapper
@@ -80,6 +81,23 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     callbacks: List[Callback] = instantiate_callbacks(
         cfg.get("callbacks"), extra_callbacks_cfg=cfg.get("extra_callbacks")
     )
+
+    if cfg.get("logger") and "wandb" in cfg.get("logger"):
+        with open_dict(cfg):
+            if cfg.logger.wandb.get("name") is None:
+                num_params = sum(p.numel() for p in model.parameters())
+                if num_params >= 1_000_000_000:
+                    params_str = f"{num_params / 1_000_000_000:.3g}B"
+                else:
+                    params_str = f"{num_params / 1_000_000:.3g}M"
+                tags_str = ""
+                if cfg.get("tags"):
+                    tags_str = "||".join(cfg.tags)
+
+                if tags_str:
+                    cfg.logger.wandb.name = f"{tags_str}-{params_str}"
+                else:
+                    cfg.logger.wandb.name = params_str
 
     log.info("Instantiating loggers...")
     logger: List[Logger] = instantiate_loggers(cfg.get("logger"))
@@ -138,8 +156,9 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         log.info("Starting testing!")
         ckpt_path = trainer.checkpoint_callback.best_model_path
         if ckpt_path == "":
-            log.warning("Best ckpt not found! Using current weights for testing...")
-            ckpt_path = None
+            log.warning("Best ckpt not found! Using config ckpt path...")
+            ckpt_path = cfg.get("ckpt_path")
+        print("CHECKPOINT PATH", ckpt_path)
         trainer.test(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
         log.info(f"Best ckpt path: {ckpt_path}")
 

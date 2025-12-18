@@ -1,13 +1,2 @@
-from .base import BaseProteinDataset
-from .fasta import FastaProteinDataset
-from .hf_datasets import (
-    FileBasedHFProteinDataset,
-    HFProteinDatasetConfig,
-    IterableHFProteinDataset,
-    MemoryMappedHFProteinDataset,
-    SequenceDocumentIterableDataset,
-    SequenceDocumentMapDataset,
-    StructureDocumentIterableDataset,
-    StructureDocumentMapDataset,
-)
+from .family_text_memmap_datasets import ProteinFamilyMemmapDataset
 from .proteingym import ProteinGymDataset

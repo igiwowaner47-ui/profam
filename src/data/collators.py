@@ -6,6 +6,7 @@ from torch.utils.data import default_collate
 from transformers.data.data_collator import DefaultDataCollator, default_data_collator
 
 from src.data.objects import StringObject
+from src.data.processors.batch_transforms import pack_batches
 
 
 def np_flatten(
@@ -263,10 +264,15 @@ class DocumentBatchCollator:
         tokenizer,
         ignore_gaps: bool = False,
         feature_names: Optional[List[str]] = None,
+        pack_to_max_tokens: Optional[int] = None,
+        allow_split_packed_documents: bool = False,
     ):
+
         self.tokenizer = tokenizer
         self.ignore_gaps = ignore_gaps
         self.feature_names = feature_names
+        self.pack_to_max_tokens = pack_to_max_tokens
+        self.allow_split_packed_documents = allow_split_packed_documents
 
     def __call__(self, examples):
         # TODO: maybe I have an issue with blending data with different keys?
@@ -274,16 +280,105 @@ class DocumentBatchCollator:
         def keep_feature(feature_name):
             return self.feature_names is None or feature_name in self.feature_names
 
+        # If packing enabled, greedily fill up to pack_to_max_tokens
+        if self.pack_to_max_tokens is not None:
+            chosen, remainder = [], []
+            current_tokens = 0
+            for ex in examples:
+                n_tokens = len(ex["input_ids"])
+                if (
+                    current_tokens + n_tokens <= self.pack_to_max_tokens
+                    or len(chosen) == 0
+                ):
+                    chosen.append(ex)
+                    current_tokens += n_tokens
+                else:
+                    # print("Warning too many tokens in batch")
+                    break
+
+            combined_examples = chosen
+        else:
+            combined_examples = examples
+
         non_string_data = [
             {k: v for k, v in e.items() if (not isinstance(v, str)) and keep_feature(k)}
-            for e in examples
+            for e in combined_examples
         ]
-        # TODO: handle Nones
+
+        # If packing was performed and resulted in multiple chosen examples,
+        # actually pack them now into a single example dict.
+        if self.pack_to_max_tokens is not None and len(non_string_data) > 1:
+            # pack_batches expects a dict of lists, convert non_string_data (list of dicts)
+            # It returns a dict of lists, where each list has 1 element (the packed data)
+            packed_dict_of_lists = pack_batches(
+                non_string_data,  # This should be a list of dicts
+                max_tokens_per_batch=self.pack_to_max_tokens,
+                tokenizer=self.tokenizer,
+                allow_split_packed_documents=self.allow_split_packed_documents,
+            )
+            # Convert the dict of lists (with one item per list) to a single dict
+            single_packed_example = {k: v[0] for k, v in packed_dict_of_lists.items()}
+            non_string_data = [
+                single_packed_example
+            ]  # Now a list containing one packed dict
+        elif len(non_string_data) == 0:
+            # This can happen if the ring buffer was empty and no new examples came in.
+            # Or if all examples were filtered out (e.g. by keep_feature)
+            # Return an empty dict or handle as appropriate for downstream.
+            # For now, let default_collate handle it, it might raise an error or return empty tensors.
+            pass
+
         string_data = [
             {k: v for k, v in e.items() if isinstance(v, str) and keep_feature(k)}
-            for e in examples
+            for e in combined_examples
         ]
+
+        # Adjust string_data to match the (potentially) packed non_string_data
+        if self.pack_to_max_tokens is not None and len(chosen) > 1:
+            # If packing occurred, string_data needs to be reconstructed for the single packed item
+            # The original string fields from all chosen examples are concatenated.
+            packed_string_data = {}
+            if combined_examples:  # Ensure combined_examples (chosen) is not empty
+                for key in [
+                    k
+                    for k in combined_examples[0]
+                    if isinstance(combined_examples[0][k], str)
+                ]:
+                    if keep_feature(key):
+                        parts = [e[key] for e in combined_examples]
+                        packed_string_data[key] = "$".join(parts)
+            string_data = (
+                [packed_string_data] if packed_string_data else []
+            )  # list containing one dict of packed strings
+        elif len(non_string_data) == 0:
+            string_data = []
+
         string_data_keys = set(k for obs in string_data for k in obs.keys())
+
+        # Pad for specified keys to handle variable lengths ofr batch_size > 1
+        if len(non_string_data) > 1:
+            keys_to_pad = [
+                "input_ids",
+                "attention_mask",
+                "aa_mask",
+            ]
+            for key in keys_to_pad:
+                existing = [d for d in non_string_data if key in d]
+                if existing:
+                    max_len = max(len(d[key]) for d in existing)
+                    for d in non_string_data:
+                        if key in d:
+                            val = d[key]
+                            if isinstance(val, list):
+                                curr_len = len(val)
+                                if curr_len < max_len:
+                                    d[key] = val + [0] * (max_len - curr_len)
+                            elif isinstance(val, np.ndarray):
+                                curr_len = val.shape[0]
+                                if curr_len < max_len:
+                                    pad_width = [(0, max_len - curr_len)]
+                                    pad_width += [(0, 0)] * (val.ndim - 1)
+                                    d[key] = np.pad(val, pad_width, mode="constant")
         try:
             batch = default_collate(non_string_data)
         except Exception as e:
@@ -307,6 +402,11 @@ class DocumentBatchCollator:
             batch[str_key] = str_obj
 
         if "batch_size" not in batch:
-            batch["batch_size"] = len(examples)
-
+            batch["batch_size"] = len(combined_examples)
+        # if 'train' in examples[0]['ds_name']:
+        #     proportion_uniref_90 = sum(1 for ex in combined_examples if 'uniref90' in ex['ds_name']) / len(combined_examples)
+        #     proportion_funfam_50 = sum(1 for ex in combined_examples if 'funfam' in ex['ds_name']) / len(combined_examples)
+        #     print('buffer_len:', ring_buffer_len, batch['input_ids'].shape, 'uniref:', proportion_uniref_90, 'funfam:', proportion_funfam_50)
+        # elif 'val' in examples[0]['ds_name']:
+        #     print('val collate_buffer_len:', ring_buffer_len)
         return batch

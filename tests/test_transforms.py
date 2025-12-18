@@ -1,9 +1,10 @@
 import numpy as np
 import pytest
 
-from src.data.objects import ProteinDocument, check_array_lengths
+from src.data.objects import ProteinDocument
 from src.data.processors.transforms import (
     preprocess_raw_sequences_sampling_to_max_tokens,
+    random_crop,
 )
 
 
@@ -11,26 +12,10 @@ from src.data.processors.transforms import (
 def protein_document():
     sequences = ["M" * 100, "A" * 150, "G" * 200]  # Sequences longer than max_tokens
     accessions = ["P12345", "Q67890", "R23456"]
-    plddts = [np.random.rand(100), np.random.rand(150), np.random.rand(200)]
-    backbone_coords = [
-        np.random.rand(100, 4, 3),
-        np.random.rand(150, 4, 3),
-        np.random.rand(200, 4, 3),
-    ]
-    backbone_coords_masks = [
-        np.ones((100, 4)),
-        np.ones((150, 4)),
-        np.ones((200, 4)),
-    ]
-    structure_tokens = ["X" * 100, "Y" * 150, "Z" * 200]
 
     return ProteinDocument(
         sequences=sequences,
         accessions=accessions,
-        plddts=plddts,
-        backbone_coords=backbone_coords,
-        backbone_coords_masks=backbone_coords_masks,
-        structure_tokens=structure_tokens,
     )
 
 
@@ -50,10 +35,13 @@ def test_sample_to_max_tokens_exceeds_max(protein_document, profam_tokenizer):
             len(sampled_proteins.sequences[0])
             == max_tokens - profam_tokenizer.num_start_tokens - 1
         )
-        sequence_lengths = check_array_lengths(
-            sampled_proteins.sequences,
-            sampled_proteins.modality_masks,
-        )
-        assert (
-            sequence_lengths[0][0] == max_tokens - profam_tokenizer.num_start_tokens - 1
-        )
+
+
+def test_random_crop():
+    proteins = ProteinDocument(
+        sequences=["ABCDEFGHIJKLMNOPQRSTUVWXYZ"],
+        accessions=["P12345"],
+    )
+    cropped_proteins = random_crop(proteins, min_length=3, max_length=3, crop_prob=1.0)
+    assert len(cropped_proteins) == 1
+    assert len(cropped_proteins.sequences[0]) == 3

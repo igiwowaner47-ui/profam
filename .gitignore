@@ -20,6 +20,8 @@ commit_hash.txt
 data/val_test/pfam/test/clustered_split_fastas/
 data/val_test/pfam/val/clustered_split_fastas/
 data/val_test/overlap_counts/
+proteingym_variants/
+debug_gym_results/
 data/val_test/pfam/test/random_split_fastas/
 out/
 data/val_test/pfam/val/random_split_fastas/
@@ -31,6 +33,7 @@ data/val_test/overlap_counts/
 src/models/tranception
 data/val_test/overlap_counts/
 data/cath_chain_topology_class.pickle
+scripts/adhoc_analysis/redundant_scripts/
 */.ipynb_checkpoints/
 .ipynb_checkpoints/
 .env
@@ -47,3 +50,15 @@ data/cath_chain_topology_class.pickle
 src/tools/foldtoken/
 results/
 out/
+.lesshst
+.zshrc
+.zcompdump
+.viminfo
+.venv/
+evo_finetune_gym/
+model_checkpoints/profam-1/checkpoints/last.ckpt
+tests/test_min20_max90_mapping_alignment.py
+model_checkpoints/
+data/train_example/*/*.idx.info
+data/train_example/*/*.idx.npy
+data/score_sequences_example/*_weights.npz
